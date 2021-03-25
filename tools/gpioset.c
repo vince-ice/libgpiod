@@ -7,6 +7,7 @@
 #include <limits.h>
 #include <poll.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
 #include <unistd.h>
@@ -175,12 +176,12 @@ static const struct mode_mapping *parse_mode(const char *mode)
 	return NULL;
 }
 
-static int drive_flags(const char *option)
+static int parse_drive(const char *option)
 {
 	if (strcmp(option, "open-drain") == 0)
-		return GPIOD_LINE_REQUEST_FLAG_OPEN_DRAIN;
+		return GPIOD_LINE_DRIVE_OPEN_DRAIN;
 	if (strcmp(option, "open-source") == 0)
-		return GPIOD_LINE_REQUEST_FLAG_OPEN_SOURCE;
+		return GPIOD_LINE_DRIVE_OPEN_SOURCE;
 	if (strcmp(option, "push-pull") != 0)
 		die("invalid drive: %s", option);
 	return 0;
@@ -189,12 +190,14 @@ static int drive_flags(const char *option)
 int main(int argc, char **argv)
 {
 	const struct mode_mapping *mode = &modes[MODE_EXIT];
-	struct gpiod_line_request_config config;
-	int *values, rv, optc, opti, flags = 0;
+	int ret, optc, opti, bias = 0, drive = 0, *values;
+	struct gpiod_request_config *req_cfg;
 	unsigned int *offsets, num_lines, i;
-	struct gpiod_line_bulk *lines;
+	struct gpiod_line_request *request;
+	struct gpiod_line_config *line_cfg;
 	struct callback_data cbdata;
 	struct gpiod_chip *chip;
+	bool active_low = false;
 	char *device, *end;
 
 	memset(&cbdata, 0, sizeof(cbdata));
@@ -212,13 +215,13 @@ int main(int argc, char **argv)
 			print_version();
 			return EXIT_SUCCESS;
 		case 'l':
-			flags |= GPIOD_LINE_REQUEST_FLAG_ACTIVE_LOW;
+			active_low = true;
 			break;
 		case 'B':
-			flags |= bias_flags(optarg);
+			bias = parse_bias(optarg);
 			break;
 		case 'D':
-			flags |= drive_flags(optarg);
+			drive = parse_drive(optarg);
 			break;
 		case 'm':
 			mode = parse_mode(optarg);
@@ -267,14 +270,14 @@ int main(int argc, char **argv)
 
 	num_lines = argc - 1;
 
-	offsets = malloc(sizeof(*offsets) * num_lines);
-	values = malloc(sizeof(*values) * num_lines);
-	if (!values || !offsets)
+	offsets = calloc(num_lines, sizeof(*offsets));
+	values = calloc(num_lines, sizeof(*values));
+	if (!offsets)
 		die("out of memory");
 
 	for (i = 0; i < num_lines; i++) {
-		rv = sscanf(argv[i + 1], "%u=%d", &offsets[i], &values[i]);
-		if (rv != 2)
+		ret = sscanf(argv[i + 1], "%u=%d", &offsets[i], &values[i]);
+		if (ret != 2)
 			die("invalid offset<->value mapping: %s", argv[i + 1]);
 
 		if (values[i] != 0 && values[i] != 1)
@@ -288,28 +291,39 @@ int main(int argc, char **argv)
 	if (!chip)
 		die_perror("unable to open %s", device);
 
-	lines = gpiod_chip_get_lines(chip, offsets, num_lines);
-	if (!lines)
-		die_perror("unable to retrieve GPIO lines from chip");
+	line_cfg = gpiod_line_config_new();
+	if (!line_cfg)
+		die_perror("unable to allocate the line config structure");
 
-	memset(&config, 0, sizeof(config));
+	if (bias)
+		gpiod_line_config_set_bias(line_cfg, bias);
+	if (drive)
+		gpiod_line_config_set_drive(line_cfg, drive);
+	if (active_low)
+		gpiod_line_config_set_active_low(line_cfg);
+	gpiod_line_config_set_direction(line_cfg, GPIOD_LINE_DIRECTION_OUTPUT);
+	gpiod_line_config_set_output_values(line_cfg, num_lines,
+					    offsets, values);
 
-	config.consumer = "gpioset";
-	config.request_type = GPIOD_LINE_REQUEST_DIRECTION_OUTPUT;
-	config.flags = flags;
+	req_cfg = gpiod_request_config_new();
+	if (!req_cfg)
+		die_perror("unable to allocate the request config structure");
 
-	rv = gpiod_line_request_bulk(lines, &config, values);
-	if (rv)
+	gpiod_request_config_set_consumer(req_cfg, "gpioset");
+	gpiod_request_config_set_offsets(req_cfg, num_lines, offsets);
+
+	request = gpiod_chip_request_lines(chip, req_cfg, line_cfg);
+	if (!request)
 		die_perror("unable to request lines");
 
 	if (mode->callback)
 		mode->callback(&cbdata);
 
-	gpiod_line_release_bulk(lines);
-	gpiod_chip_unref(chip);
-	gpiod_line_bulk_free(lines);
+	gpiod_line_request_release(request);
+	gpiod_request_config_free(req_cfg);
+	gpiod_line_config_free(line_cfg);
+	gpiod_chip_close(chip);
 	free(offsets);
-	free(values);
 
 	return EXIT_SUCCESS;
 }

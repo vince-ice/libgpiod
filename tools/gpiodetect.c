@@ -6,6 +6,7 @@
 #include <getopt.h>
 #include <gpiod.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "tools-common.h"
@@ -66,21 +67,15 @@ int main(int argc, char **argv)
 
 	for (i = 0; i < num_chips; i++) {
 		chip = chip_open_by_name(entries[i]->d_name);
-		if (!chip) {
-			if (errno == EACCES)
-				printf("%s Permission denied\n",
-				       entries[i]->d_name);
-			else
-				die_perror("unable to open %s",
-					   entries[i]->d_name);
-		}
+		if (!chip)
+			die_perror("unable to open %s", entries[i]->d_name);
 
 		printf("%s [%s] (%u lines)\n",
 		       gpiod_chip_get_name(chip),
 		       gpiod_chip_get_label(chip),
 		       gpiod_chip_get_num_lines(chip));
 
-		gpiod_chip_unref(chip);
+		gpiod_chip_close(chip);
 		free(entries[i]);
 	}
 

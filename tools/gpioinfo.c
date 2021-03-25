@@ -7,46 +7,47 @@
 #include <gpiod.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "tools-common.h"
 
-typedef bool (*is_set_func)(struct gpiod_line *);
+typedef bool (*is_set_func)(struct gpiod_line_info *);
 
 struct flag {
 	const char *name;
 	is_set_func is_set;
 };
 
-static bool line_bias_is_pullup(struct gpiod_line *line)
+static bool line_bias_is_pullup(struct gpiod_line_info *info)
 {
-	return gpiod_line_bias(line) == GPIOD_LINE_BIAS_PULL_UP;
+	return gpiod_line_info_get_bias(info) == GPIOD_LINE_BIAS_PULL_UP;
 }
 
-static bool line_bias_is_pulldown(struct gpiod_line *line)
+static bool line_bias_is_pulldown(struct gpiod_line_info *info)
 {
-	return gpiod_line_bias(line) == GPIOD_LINE_BIAS_PULL_DOWN;
+	return gpiod_line_info_get_bias(info) == GPIOD_LINE_BIAS_PULL_DOWN;
 }
 
-static bool line_bias_is_disabled(struct gpiod_line *line)
+static bool line_bias_is_disabled(struct gpiod_line_info *info)
 {
-	return gpiod_line_bias(line) == GPIOD_LINE_BIAS_DISABLED;
+	return gpiod_line_info_get_bias(info) == GPIOD_LINE_BIAS_DISABLED;
 }
 
-static bool line_drive_is_open_drain(struct gpiod_line *line)
+static bool line_drive_is_open_drain(struct gpiod_line_info *info)
 {
-	return gpiod_line_drive(line) == GPIOD_LINE_DRIVE_OPEN_DRAIN;
+	return gpiod_line_info_get_drive(info) == GPIOD_LINE_DRIVE_OPEN_DRAIN;
 }
 
-static bool line_drive_is_open_source(struct gpiod_line *line)
+static bool line_drive_is_open_source(struct gpiod_line_info *info)
 {
-	return gpiod_line_drive(line) == GPIOD_LINE_DRIVE_OPEN_SOURCE;
+	return gpiod_line_info_get_drive(info) == GPIOD_LINE_DRIVE_OPEN_SOURCE;
 }
 
 static const struct flag flags[] = {
 	{
 		.name = "used",
-		.is_set = gpiod_line_is_used,
+		.is_set = gpiod_line_info_is_used,
 	},
 	{
 		.name = "open-drain",
@@ -124,8 +125,8 @@ static PRINTF(3, 4) void prinfo(bool *of,
 static void list_lines(struct gpiod_chip *chip)
 {
 	bool flag_printed, of, active_low;
+	struct gpiod_line_info *info;
 	const char *name, *consumer;
-	struct gpiod_line *line;
 	unsigned int i, offset;
 	int direction;
 
@@ -133,14 +134,14 @@ static void list_lines(struct gpiod_chip *chip)
 	       gpiod_chip_get_name(chip), gpiod_chip_get_num_lines(chip));
 
 	for (offset = 0; offset < gpiod_chip_get_num_lines(chip); offset++) {
-		line = gpiod_chip_get_line(chip, offset);
-		if (!line)
+		info = gpiod_chip_get_line_info(chip, offset);
+		if (!info)
 			die_perror("unable to retrieve the line object from chip");
 
-		name = gpiod_line_name(line);
-		consumer = gpiod_line_consumer(line);
-		direction = gpiod_line_direction(line);
-		active_low = gpiod_line_is_active_low(line);
+		name = gpiod_line_info_get_name(info);
+		consumer = gpiod_line_info_get_consumer(info);
+		direction = gpiod_line_info_get_direction(info);
+		active_low = gpiod_line_info_is_active_low(info);
 
 		of = false;
 
@@ -152,7 +153,7 @@ static void list_lines(struct gpiod_chip *chip)
 		     : prinfo(&of, 12, "unnamed");
 		printf(" ");
 
-		if (!gpiod_line_is_used(line))
+		if (!gpiod_line_info_is_used(info))
 			prinfo(&of, 12, "unused");
 		else
 			consumer ? prinfo(&of, 12, "\"%s\"", consumer)
@@ -167,7 +168,7 @@ static void list_lines(struct gpiod_chip *chip)
 
 		flag_printed = false;
 		for (i = 0; i < ARRAY_SIZE(flags); i++) {
-			if (flags[i].is_set(line)) {
+			if (flags[i].is_set(info)) {
 				if (flag_printed)
 					printf(" ");
 				else
@@ -180,6 +181,8 @@ static void list_lines(struct gpiod_chip *chip)
 			printf("]");
 
 		printf("\n");
+
+		gpiod_line_info_free(info);
 	}
 }
 
@@ -219,18 +222,13 @@ int main(int argc, char **argv)
 
 		for (i = 0; i < num_chips; i++) {
 			chip = chip_open_by_name(entries[i]->d_name);
-			if (!chip) {
-				if (errno == EACCES)
-					printf("%s Permission denied\n",
-					       entries[i]->d_name);
-				else
-					die_perror("unable to open %s",
-						   entries[i]->d_name);
-			}
+			if (!chip)
+				die_perror("unable to open %s",
+					   entries[i]->d_name);
 
 			list_lines(chip);
 
-			gpiod_chip_unref(chip);
+			gpiod_chip_close(chip);
 		}
 	} else {
 		for (i = 0; i < argc; i++) {
@@ -240,7 +238,7 @@ int main(int argc, char **argv)
 
 			list_lines(chip);
 
-			gpiod_chip_unref(chip);
+			gpiod_chip_close(chip);
 		}
 	}
 
