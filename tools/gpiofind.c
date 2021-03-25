@@ -6,6 +6,7 @@
 #include <getopt.h>
 #include <gpiod.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "tools-common.h"
@@ -77,7 +78,7 @@ int main(int argc, char **argv)
 		if (offset >= 0) {
 			printf("%s %u\n",
 			       gpiod_chip_get_name(chip), offset);
-			gpiod_chip_unref(chip);
+			gpiod_chip_close(chip);
 			return EXIT_SUCCESS;
 		}
 	}
