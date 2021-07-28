@@ -22,6 +22,7 @@ static const struct option longopts[] = {
 	{ "version",		no_argument,		NULL,	'v' },
 	{ "active-low",		no_argument,		NULL,	'l' },
 	{ "bias",		required_argument,	NULL,	'B' },
+	{ "debounce",		required_argument,	NULL,	'd' },
 	{ "num-events",		required_argument,	NULL,	'n' },
 	{ "silent",		no_argument,		NULL,	's' },
 	{ "rising-edge",	no_argument,		NULL,	'r' },
@@ -31,7 +32,7 @@ static const struct option longopts[] = {
 	{ GETOPT_NULL_LONGOPT },
 };
 
-static const char *const shortopts = "+hvlB:n:srfbF:";
+static const char *const shortopts = "+hvlB:d:n:srfbF:";
 
 static void print_help(void)
 {
@@ -46,6 +47,7 @@ static void print_help(void)
 	printf("  -l, --active-low:\tset the line active state to low\n");
 	printf("  -B, --bias=[as-is|disable|pull-down|pull-up] (defaults to 'as-is'):\n");
 	printf("		set the line bias\n");
+	printf("  -d, --debounce=PERIOD: enable debouncing with period in microseconds\n");
 	printf("  -n, --num-events=NUM:\texit after processing NUM events\n");
 	printf("  -s, --silent:\t\tdon't print event info\n");
 	printf("  -r, --rising-edge:\tonly process rising edge events\n");
@@ -157,6 +159,7 @@ int main(int argc, char **argv)
 	unsigned int offsets[64], num_lines = 0, offset, events_wanted = 0,
 		     events_done = 0;
 	bool watch_rising = false, watch_falling = false, active_low = false;
+	unsigned long debounce_period = 0;
 	struct gpiod_edge_event_buffer *event_buffer;
 	int optc, opti, ret, i, edge, bias = 0;
 	uint64_t timeout = 10 * 1000000000LLU;
@@ -194,6 +197,11 @@ int main(int argc, char **argv)
 			break;
 		case 'B':
 			bias = parse_bias(optarg);
+			break;
+		case 'd':
+			debounce_period = strtoul(optarg, &end, 10);
+			if (*end != '\0')
+				die("invalid number: %s", optarg);
 			break;
 		case 'n':
 			events_wanted = strtoul(optarg, &end, 10);
@@ -263,6 +271,8 @@ int main(int argc, char **argv)
 	if (active_low)
 		gpiod_line_config_set_active_low(line_cfg);
 	gpiod_line_config_set_edge_detection(line_cfg, edge);
+	if (debounce_period)
+		gpiod_line_config_set_debounce_period(line_cfg, debounce_period);
 
 	req_cfg = gpiod_request_config_new();
 	if (!req_cfg)
